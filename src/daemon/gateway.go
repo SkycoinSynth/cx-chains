@@ -493,13 +493,14 @@ func (gw *Gateway) InjectBroadcastTransaction(txn coin.Transaction) error {
 	var err error
 	gw.strand("InjectBroadcastTransaction", func() {
 		err = gw.v.WithUpdateTx("gateway.InjectBroadcastTransaction", func(tx *dbutil.Tx) error {
-			if _, err := gw.v.InjectUserTransactionTx(tx, txn); err != nil {
+			_, head, inputs, err := gw.v.InjectUserTransactionTx(tx, txn)
+			if err != nil {
 				logger.WithError(err).Error("InjectUserTransactionTx failed")
 				return err
 			}
 
-			if err := gw.d.BroadcastTransaction(txn); err != nil {
-				logger.WithError(err).Error("BroadcastTransaction failed")
+			if err := gw.d.BroadcastUserTransaction(txn, head, inputs); err != nil {
+				logger.WithError(err).Error("BroadcastUserTransaction failed")
 				return err
 			}
 
@@ -617,13 +618,13 @@ func (gw *Gateway) Spend(wltID string, password []byte, coins uint64, dest ciphe
 		}
 
 		// WARNING: This is not safe from races once we remove strand
-		_, err = gw.v.InjectUserTransaction(*txn)
+		_, head, inputs, err := gw.v.InjectUserTransaction(*txn)
 		if err != nil {
 			logger.WithError(err).Error("InjectUserTransaction failed")
 			return
 		}
 
-		err = gw.d.BroadcastTransaction(*txn)
+		err = gw.d.BroadcastUserTransaction(*txn, head, inputs)
 		if err != nil {
 			logger.WithError(err).Error("BroadcastTransaction failed")
 			return
@@ -868,22 +869,21 @@ func (gw *Gateway) GetRichlist(includeDistribution bool) (visor.Richlist, error)
 	}
 
 	// Build a map from addresses to total coins held
-	allAccounts := map[string]uint64{}
+	allAccounts := map[cipher.Address]uint64{}
 	for _, out := range rbOuts.Confirmed {
-		addr := out.Body.Address.String()
-		if _, ok := allAccounts[addr]; ok {
+		if _, ok := allAccounts[out.Body.Address]; ok {
 			var err error
-			allAccounts[addr], err = coin.AddUint64(allAccounts[addr], out.Body.Coins)
+			allAccounts[out.Body.Address], err = coin.AddUint64(allAccounts[out.Body.Address], out.Body.Coins)
 			if err != nil {
 				return nil, err
 			}
 		} else {
-			allAccounts[addr] = out.Body.Coins
+			allAccounts[out.Body.Address] = out.Body.Coins
 		}
 	}
 
-	lockedAddrs := params.GetLockedDistributionAddresses()
-	addrsMap := make(map[string]struct{}, len(lockedAddrs))
+	lockedAddrs := params.GetLockedDistributionAddressesDecoded()
+	addrsMap := make(map[cipher.Address]struct{}, len(lockedAddrs))
 	for _, a := range lockedAddrs {
 		addrsMap[a] = struct{}{}
 	}
@@ -894,7 +894,7 @@ func (gw *Gateway) GetRichlist(includeDistribution bool) (visor.Richlist, error)
 	}
 
 	if !includeDistribution {
-		unlockedAddrs := params.GetUnlockedDistributionAddresses()
+		unlockedAddrs := params.GetUnlockedDistributionAddressesDecoded()
 		for _, a := range unlockedAddrs {
 			addrsMap[a] = struct{}{}
 		}
