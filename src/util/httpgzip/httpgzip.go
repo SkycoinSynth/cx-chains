@@ -1,6 +1,3 @@
-/*
-Package httpgzip basically contains a direct copy of https://gist.github.com/CJEnright/bc2d8b8dc0c1389a9feeddb110f822d7
-*/
 package httpgzip
 
 import (
